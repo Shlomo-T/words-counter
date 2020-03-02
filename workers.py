@@ -3,6 +3,11 @@ from collections import Counter
 from redis.client import StrictRedis
 from data_manager import DataManager
 from abc import ABC, abstractmethod
+import string
+
+# Punctuation to remove - not includes dash and comma
+punctuation = (string.punctuation + string.digits).replace(",-'", '')
+translation_map = str.maketrans('', '', punctuation)
 
 
 class BaseWorker(ABC):
@@ -18,12 +23,15 @@ class BaseWorker(ABC):
         pass
 
     def process_batch(self, text):
-        return Counter(text.split())
+        if text:
+            text_without_punctuation = text.translate(translation_map)
+            return Counter(text_without_punctuation.split())
 
     def save_results(self, results):
-        for word, count in results.items():
-            key = word.lower()
-            self.data_manager.increment_key(key=key, amount=count)
+        if results:
+            for word, count in results.items():
+                key = word.lower()
+                self.data_manager.increment_key(key=key, amount=count)
 
 
 class RawTextWorker(BaseWorker):
@@ -39,7 +47,7 @@ class WebUrlWorker(BaseWorker):
         try:
             response = requests.get(self.input, stream=True)
             if response.status_code == 200:
-                for line in response.iter_lines():
+                for line in response.iter_lines(decode_unicode=True):
                     results = self.process_batch(line)
                     self.save_results(results)
         finally:
