@@ -1,8 +1,9 @@
 from flask import Flask, request
 from workers import *
-from data_manager import DataManager
+from data_manager import DataManager, FileDBManager
 from celery import Celery
-from settings import CELERY_BROKER_URL, CELERY_RESULT_BACKEND
+from concurrent.futures import ThreadPoolExecutor
+from settings import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, THREAD_POOL_SIZE, USE_REDIS
 
 
 app = Flask(__name__)
@@ -16,14 +17,28 @@ app.config['CELERY_SEND_EVENTS'] = True
 celery = Celery(app.name, broker=CELERY_BROKER_URL)
 celery.conf.update(app.config)
 
+thread_pool = ThreadPoolExecutor(max_workers=THREAD_POOL_SIZE)
 
 allowed_workers = {'text': RawTextWorker, 'url': WebUrlWorker, 'file': FileSystemWorker}
 
 
 @celery.task
 def naive_worker_execute(input_method, input_data):
-    worker = allowed_workers[input_method](input_data)
+    data_manager = DataManager()
+    worker = allowed_workers[input_method](data_manager, input_data)
     worker.invoke()
+
+
+def naive_thread_execute(input_method, input_data):
+    data_manager = FileDBManager()
+    worker = allowed_workers[input_method](data_manager, input_data)
+    thread_pool.submit(worker.invoke)
+
+
+def get_db_manager():
+    if USE_REDIS:
+        return DataManager()
+    return FileDBManager()
 
 
 @app.route('/word-counter', methods=['POST'], strict_slashes=False)
@@ -33,7 +48,10 @@ def word_counter():
         return 'Bad Input', 400
     worker = payload['worker']
     input_data = payload['parameter']
-    naive_worker_execute.delay(worker, input_data)
+    if USE_REDIS:
+        naive_worker_execute.delay(worker, input_data)
+    else:
+        naive_thread_execute(worker, input_data)
     return 'OK!', 200
 
 
@@ -42,7 +60,8 @@ def word_statistics():
     keyword = request.args.get('keyword')
     if not keyword:
         return 'Bad Input: Keyword parameter is missing', 400
-    value = DataManager().get_key(key=keyword.lower())
+    db_manager = get_db_manager()
+    value = db_manager.get_key(key=keyword.lower())
     response_body = {'keyword': keyword, 'amount': value if value else 0}
     return response_body, 200
 

@@ -1,7 +1,5 @@
 import requests
 from collections import Counter
-from redis.client import StrictRedis
-from data_manager import DataManager
 from abc import ABC, abstractmethod
 import string
 
@@ -12,10 +10,8 @@ translation_map = str.maketrans('', '', punctuation)
 
 class BaseWorker(ABC):
 
-    client = StrictRedis()
-    data_manager = DataManager()
-
-    def __init__(self, _input):
+    def __init__(self, data_manager, _input):
+        self.data_manager = data_manager
         self.input = _input
 
     @abstractmethod
@@ -29,9 +25,7 @@ class BaseWorker(ABC):
 
     def save_results(self, results):
         if results:
-            for word, count in results.items():
-                key = word.lower()
-                self.data_manager.increment_key(key=key, amount=count)
+            self.data_manager.increment_keys(results)
 
 
 class RawTextWorker(BaseWorker):
